@@ -4,7 +4,9 @@ import {
   calcCurrentAllocations,
   calcTargetAllocations,
   calcDrift,
-  calcActions
+  calcActions,
+  calcRebalanceScore,
+  calcPortfolioHealth
 } from '../services/allocationEngine';
 import { generateRationale } from '../services/rationaleEngine';
 import { logger } from '../middleware/logger';
@@ -52,7 +54,11 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
     const target = calcTargetAllocations({ ...value, portfolio }, assets, total);
     const drift = calcDrift(current, target);
     const rawActions = calcActions(drift, total, value.constraints?.min_trade_size ?? 100);
-    const { actions, summary } = await generateRationale(value, current, target, drift, rawActions, total);
+    const { rebalance_score, trigger } = calcRebalanceScore(drift, rawActions, total);
+    const portfolioHealth = calcPortfolioHealth(current, value.risk_tolerance, rebalance_score);
+    const { actions, summary } = await generateRationale(
+      value, current, target, drift, rawActions, total, rebalance_score, trigger, portfolioHealth
+    );
 
     res.json({
       strategy: value.strategy,
@@ -61,6 +67,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       current_allocations: current,
       target_allocations: target,
       drift,
+      portfolio_health: portfolioHealth,
       actions,
       summary,
       generated_at: new Date().toISOString()

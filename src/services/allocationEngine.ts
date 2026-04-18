@@ -30,9 +30,7 @@ export function calcTargetAllocations(
 
   if (strategy === 'equal_weight') {
     const share = Math.round((investable / eligibleAssets.length) * 1000) / 1000;
-    for (const asset of eligibleAssets) {
-      target[asset] = Math.min(share, maxSingle);
-    }
+    for (const asset of eligibleAssets) target[asset] = Math.min(share, maxSingle);
   } else if (strategy === 'risk_adjusted') {
     const weights = RISK_WEIGHTS[risk_tolerance];
     const btcAssets = eligibleAssets.filter(a => a === 'BTC');
@@ -42,7 +40,6 @@ export function calcTargetAllocations(
 
     for (const a of btcAssets) target[a] = Math.min(weights.BTC ?? 0, maxSingle);
     for (const a of ethAssets) target[a] = Math.min(weights.ETH ?? 0, maxSingle);
-
     if (stableAssets.length > 0) {
       const stableShare = (weights.stable ?? 0) / stableAssets.length;
       for (const a of stableAssets) target[a] = stableShare;
@@ -52,16 +49,13 @@ export function calcTargetAllocations(
       for (const a of altAssets) target[a] = Math.min(altShare, maxSingle);
     }
   } else if (strategy === 'momentum_tilt') {
-    // Tilt toward non-stable assets, reduce stables
     const nonStable = eligibleAssets.filter(a => !STABLECOINS.includes(a));
     const stable = eligibleAssets.filter(a => STABLECOINS.includes(a));
     const stableAlloc = cash_buffer + (stable.length > 0 ? 0.05 : 0);
     const growthAlloc = investable - stableAlloc;
-
     const btc = nonStable.find(a => a === 'BTC');
     const eth = nonStable.find(a => a === 'ETH');
     const alts = nonStable.filter(a => a !== 'BTC' && a !== 'ETH');
-
     if (btc) target[btc] = Math.min(growthAlloc * 0.40, maxSingle);
     if (eth) target[eth] = Math.min(growthAlloc * 0.30, maxSingle);
     if (alts.length > 0) {
@@ -73,18 +67,14 @@ export function calcTargetAllocations(
     }
   }
 
-  if (cash_buffer > 0 && !target['USDC']) {
-    target['USDC'] = cash_buffer;
-  }
+  if (cash_buffer > 0 && !target['USDC']) target['USDC'] = cash_buffer;
 
-  // Normalize to sum to 1
   const sum = Object.values(target).reduce((a, b) => a + b, 0);
   if (sum > 0) {
     for (const key of Object.keys(target)) {
       target[key] = Math.round((target[key] / sum) * 1000) / 1000;
     }
   }
-
   return target;
 }
 
@@ -111,11 +101,7 @@ export function calcActions(
   for (const [asset, d] of Object.entries(drift)) {
     const amount = Math.abs(Math.round(d * total));
     if (amount < minTradeSize) continue;
-    actions.push({
-      asset,
-      action: d > 0 ? 'sell' : 'buy',
-      amount_usd: amount
-    });
+    actions.push({ asset, action: d > 0 ? 'sell' : 'buy', amount_usd: amount });
   }
   return actions;
 }
@@ -123,4 +109,47 @@ export function calcActions(
 export function calcTurnover(actions: Omit<RebalanceAction, 'reason'>[], total: number): number {
   const totalTraded = actions.reduce((sum, a) => sum + a.amount_usd, 0);
   return Math.round((totalTraded / total) * 100) / 100;
+}
+
+export function calcRebalanceScore(
+  drift: Record<string, number>,
+  actions: Omit<RebalanceAction, 'reason'>[],
+  total: number
+): { rebalance_score: number; trigger: boolean } {
+  const maxDrift = Math.max(...Object.values(drift).map(Math.abs));
+  const turnover = calcTurnover(actions, total);
+  const driftScore = Math.min(maxDrift * 200, 60);   // up to 60pts
+  const turnoverScore = Math.min(turnover * 100, 40); // up to 40pts
+  const rebalance_score = Math.round(driftScore + turnoverScore);
+  return { rebalance_score, trigger: rebalance_score >= 30 };
+}
+
+export function calcPortfolioHealth(
+  current: Record<string, number>,
+  riskTolerance: string,
+  rebalanceScore: number
+): { score: number; risk: string; diversification: string } {
+  const assets = Object.keys(current);
+  const maxAlloc = Math.max(...Object.values(current));
+  const stableAlloc = Object.entries(current)
+    .filter(([a]) => STABLECOINS.includes(a))
+    .reduce((sum, [, v]) => sum + v, 0);
+
+  // Diversification: penalize concentration
+  const diversification = maxAlloc > 0.7 ? 'poor' : maxAlloc > 0.5 ? 'moderate' : assets.length >= 4 ? 'good' : 'moderate';
+
+  // Risk posture vs tolerance
+  const highRiskAlloc = Object.entries(current)
+    .filter(([a]) => !['BTC', 'ETH', ...STABLECOINS].includes(a))
+    .reduce((sum, [, v]) => sum + v, 0);
+
+  const risk = highRiskAlloc > 0.4 ? 'high' : stableAlloc > 0.3 ? 'low' : 'moderate';
+
+  // Health score
+  const divScore = diversification === 'good' ? 40 : diversification === 'moderate' ? 25 : 10;
+  const driftPenalty = Math.min(rebalanceScore / 2, 30);
+  const riskScore = risk === riskTolerance ? 30 : 15;
+  const score = Math.max(0, Math.min(100, Math.round(divScore + riskScore + 30 - driftPenalty)));
+
+  return { score, risk, diversification };
 }

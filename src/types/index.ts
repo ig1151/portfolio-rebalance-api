@@ -24,8 +24,16 @@ export interface RebalanceAction {
   reason: string;
 }
 
+export interface PortfolioHealth {
+  score: number;
+  risk: string;
+  diversification: string;
+}
+
 export interface RebalanceSummary {
   rebalance_needed: boolean;
+  rebalance_score: number;
+  trigger: boolean;
   estimated_turnover: number;
   portfolio_risk_posture: string;
 }
@@ -37,6 +45,7 @@ export interface RebalanceResponse {
   current_allocations: Record<string, number>;
   target_allocations: Record<string, number>;
   drift: Record<string, number>;
+  portfolio_health: PortfolioHealth;
   actions: RebalanceAction[];
   summary: RebalanceSummary;
   generated_at: string;

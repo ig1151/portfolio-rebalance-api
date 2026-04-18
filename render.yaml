@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: portfolio-rebalance-api
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: node dist/index.js
+    healthCheckPath: /v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ANTHROPIC_API_KEY
+        sync: false
